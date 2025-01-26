@@ -1,15 +1,3 @@
-0️ 0 zero
-1️ 1 one
-2️ 2 two
-3️ 3 three
-4️ 4 four
-5️ 5 five
-6️ 6 six
-7️ 7 seven
-8️ 8 eight
-9️ 9 nine
-*️ asterisk star wildcard
-#️ hash hashtag lb number pound sign
 😀 cheerful cheery face grin grinning happy laugh nice smile smiling teeth
 😃 awesome big eyes face grin grinning happy mouth open smile smiling teeth yay
 😄 eye eyes face grin grinning happy laugh lol mouth open smile smiling
@@ -3520,9 +3508,6 @@
 👩‍👧 child family girl woman
 👩‍👧‍👦 boy child family girl woman
 👩‍👧‍👧 child family girl woman
-#️⃣ keycap # pound
-*️⃣ keycap * star
-🔟 keycap 10 ten
 🇦🇨 flag Ascension Island
 🇦🇩 flag Andorra
 🇦🇪 flag United Arab Emirates
@@ -3795,3 +3780,18 @@
 7️⃣ keycap 7 seven
 8️⃣ keycap 8 eight
 9️⃣ keycap 9 nine
+🔟 keycap 10 ten
+#️⃣ keycap # pound
+*️⃣ keycap * star
+0️ 0 zero
+1️ 1 one
+2️ 2 two
+3️ 3 three
+4️ 4 four
+5️ 5 five
+6️ 6 six
+7️ 7 seven
+8️ 8 eight
+9️ 9 nine
+#️ hash hashtag lb number pound sign
+*️ asterisk star wildcard
