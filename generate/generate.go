@@ -132,12 +132,7 @@ func emojis() ([]string, error) {
 	return append(sequences, zwjSequences...), nil
 }
 
-type emojiAnnotation struct {
-	name        string
-	annotations []string
-}
-
-func annotationsInFile(f io.Reader) (map[string]*emojiAnnotation, error) {
+func annotationsInFile(f io.Reader) (map[string]string, error) {
 	contents, err := io.ReadAll(f)
 	if err != nil {
 		return nil, fmt.Errorf("read CLDR data: %s", err)
@@ -153,23 +148,37 @@ func annotationsInFile(f io.Reader) (map[string]*emojiAnnotation, error) {
 		return nil, fmt.Errorf("parse CLDR data: %s", err)
 	}
 
-	emojiAnnotations := make(map[string]*emojiAnnotation)
+	type annotationData struct {
+		name        string
+		annotations []string
+	}
+	emojiAnnotations := make(map[string]annotationData)
 	for _, annotation := range annotations.Annotations {
-		annotationData, ok := emojiAnnotations[annotation.CP]
-		if !ok {
-			annotationData = new(emojiAnnotation)
-			emojiAnnotations[annotation.CP] = annotationData
-		}
+		annotationData := emojiAnnotations[annotation.CP]
 		if annotation.Type == "tts" {
 			annotationData.name = annotation.Annotation
 		} else {
-			annotationData.annotations = strings.FieldsFunc(annotation.Annotation, func(r rune) bool { return r == ' ' || r == '|' })
+			annotations := strings.Split(annotation.Annotation, "|")
+			for i, a := range annotations {
+				annotations[i] = strings.TrimSpace(a)
+			}
+			annotationData.annotations = annotations
 		}
+		emojiAnnotations[annotation.CP] = annotationData
 	}
-	return emojiAnnotations, nil
+	annotationsCombined := make(map[string]string, len(emojiAnnotations))
+	for emoji, annotation := range emojiAnnotations {
+		annotation.annotations = slices.DeleteFunc(annotation.annotations, func(s string) bool { return strings.Contains(annotation.name, s) })
+		annotationsStr := annotation.name
+		if len(annotation.annotations) > 0 {
+			annotationsStr += " " + strings.Join(annotation.annotations, " ")
+		}
+		annotationsCombined[emoji] = annotationsStr
+	}
+	return annotationsCombined, nil
 }
 
-func annotations(cldrData *zip.Reader) (map[string]*emojiAnnotation, error) {
+func annotations(cldrData *zip.Reader) (map[string]string, error) {
 	annotationsFile, err := cldrData.Open("common/annotations/en.xml")
 	if err != nil {
 		return nil, fmt.Errorf("read CLDR data: %s", err)
@@ -303,12 +312,7 @@ func generate() error {
 		if !ok {
 			return fmt.Errorf("emoji %q has no annotation", emoji)
 		}
-		annotation.annotations = slices.DeleteFunc(annotation.annotations, func(s string) bool { return strings.Contains(annotation.name, s) })
-		fmt.Print(emoji, " ", annotation.name)
-		if annotations := strings.Join(annotation.annotations, " "); annotations != "" {
-			fmt.Print(" ", annotations)
-		}
-		fmt.Println()
+		fmt.Println(emoji, annotation)
 	}
 	return nil
 }
