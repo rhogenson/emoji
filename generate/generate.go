@@ -61,9 +61,9 @@ func parseEmojiDataLine(line string) (emojis []string, tag string, err error) {
 	if len(parts) < 2 {
 		return nil, "", fmt.Errorf("parse line %q: %s", line, err)
 	}
-	codePointsStr := strings.TrimSpace(parts[0])
+	codepointsStr := strings.TrimSpace(parts[0])
 	tag = strings.TrimSpace(parts[1])
-	if startStr, endStr, ok := strings.Cut(codePointsStr, ".."); ok {
+	if startStr, endStr, ok := strings.Cut(codepointsStr, ".."); ok {
 		start, err := strconv.ParseInt(startStr, 16, 32)
 		if err != nil {
 			return nil, "", fmt.Errorf("failed to parse line %q: %s", line, err)
@@ -78,14 +78,14 @@ func parseEmojiDataLine(line string) (emojis []string, tag string, err error) {
 		}
 		return emojis, tag, nil
 	}
-	codePoints := strings.Split(codePointsStr, " ")
-	emoji := make([]rune, len(codePoints))
-	for i, codePointStr := range codePoints {
-		codePoint, err := strconv.ParseInt(codePointStr, 16, 32)
+	codepoints := strings.Split(codepointsStr, " ")
+	emoji := make([]rune, len(codepoints))
+	for i, codepointStr := range codepoints {
+		codepoint, err := strconv.ParseInt(codepointStr, 16, 32)
 		if err != nil {
 			return nil, "", fmt.Errorf("failed to parse line %q: %s", line, err)
 		}
-		emoji[i] = rune(codePoint)
+		emoji[i] = rune(codepoint)
 	}
 	return []string{string(emoji)}, tag, nil
 }
@@ -236,7 +236,7 @@ func removePresentationSelector(emoji string) string {
 	return strings.ReplaceAll(emoji, "\ufe0f", "")
 }
 
-func collationData(cldrData *zip.Reader) (map[string]int, error) {
+func collationData(cldrData *zip.Reader) (func(string) int, error) {
 	file, err := cldrData.Open("common/collation/root.xml")
 	if err != nil {
 		return nil, fmt.Errorf("read CLDR data: %s", err)
@@ -266,9 +266,15 @@ func collationData(cldrData *zip.Reader) (map[string]int, error) {
 		return nil, fmt.Errorf("no emoji collation found in %q", file)
 	}
 	// 🫤
+	ignorable := make(map[rune]bool)
 	collation := make(map[string]int)
 	count := 1
 	for _, line := range strings.Split(emojiCollation, "\n") {
+		if line, ok := strings.CutPrefix(line, "& [last primary ignorable]<<*"); ok {
+			for _, rune := range line {
+				ignorable[rune] = true
+			}
+		}
 		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "&") {
 			continue
 		}
@@ -279,25 +285,48 @@ func collationData(cldrData *zip.Reader) (map[string]int, error) {
 			}
 		} else if strings.HasPrefix(line, "<") {
 			for _, emoji := range strings.FieldsFunc(line[1:], func(r rune) bool { return r == ' ' || r == '<' || r == '=' || r == '\'' }) {
-				collation[removePresentationSelector(emoji)] = count
+				collation[emoji] = count
 				count++
 			}
 		} else {
 			return nil, fmt.Errorf("unexpected line format %q", line)
 		}
 	}
-	return collation, nil
-}
-
-func collationOrder(e string, collationData map[string]int) int {
-	for e != "" {
-		if n, ok := collationData[removePresentationSelector(e)]; ok {
+	return func(emoji string) int {
+		// First try the minimally qualified version, with one trailing
+		// modifier removed.
+		minimallyQualified := removePresentationSelector(emoji)
+		lastRune, size := utf8.DecodeLastRuneInString(minimallyQualified)
+		if size < len(minimallyQualified) && ignorable[lastRune] {
+			minimallyQualified = minimallyQualified[:len(minimallyQualified)-size]
+			minimallyQualified = strings.TrimSuffix(minimallyQualified, "\u200d") // ZWJ
+		}
+		if n, ok := collation[minimallyQualified]; ok {
 			return n
 		}
-		_, size := utf8.DecodeLastRuneInString(e)
-		e = e[:len(e)-size]
-	}
-	return -1
+		// If that's not found, try the fully unqualified version,
+		// where we remove all modifiers.
+		unqualified := minimallyQualified
+		var unqualifiedRunes []rune
+		for _, r := range unqualified {
+			if !ignorable[r] {
+				unqualifiedRunes = append(unqualifiedRunes, r)
+			}
+		}
+		unqualified = string(unqualifiedRunes)
+		unqualified = strings.TrimRight(unqualified, "\u200d") // ZWJ
+		if n, ok := collation[unqualified]; ok {
+			return n
+		}
+		// Finally, fall back to checking the first codepoint.
+		firstRune, _ := utf8.DecodeRuneInString(emoji)
+		if n, ok := collation[string([]rune{firstRune})]; ok {
+			return n
+		}
+		fmt.Fprintf(os.Stderr, "Unable to classify emoji %s", emoji)
+		os.Exit(1)
+		panic("unreachable")
+	}, nil
 }
 
 func generate() error {
@@ -328,15 +357,18 @@ func generate() error {
 	if err != nil {
 		return err
 	}
-	collation, err := collationData(&cldrData.Reader)
+	collate, err := collationData(&cldrData.Reader)
 	if err != nil {
 		return err
 	}
 	slices.SortFunc(emojis, func(e, f string) int {
-		if n := collationOrder(e, collation) - collationOrder(f, collation); n != 0 {
+		if n := collate(e) - collate(f); n != 0 {
 			return n
 		}
-		return strings.Compare(e, f)
+		if n := strings.Count(e, "\u200d") - strings.Count(f, "\u200d"); n != 0 {
+			return n
+		}
+		return slices.Compare([]rune(e), []rune(f))
 	})
 	for _, emoji := range emojis {
 		// From CLDR: "Warnings: All cp values have U+FE0F characters removed."
