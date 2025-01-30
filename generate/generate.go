@@ -49,7 +49,11 @@ func getCached(url, cacheDir string) (string, error) {
 		os.Remove(cachePath)
 		return "", fmt.Errorf("write %q: %s", cachePath, err)
 	}
-	return cachePath, f.Close()
+	if err := f.Close(); err != nil {
+		os.Remove(cachePath)
+		return "", err
+	}
+	return cachePath, nil
 }
 
 func parseEmojiDataLine(line string) (emojis []string, tag string, err error) {
