@@ -169,7 +169,8 @@ func annotationsInFile(f io.Reader) (map[string]string, error) {
 	annotationsCombined := make(map[string]string, len(emojiAnnotations))
 	for emoji, annotation := range emojiAnnotations {
 		annotation.annotations = slices.DeleteFunc(annotation.annotations, func(s string) bool { return strings.Contains(annotation.name, s) })
-		annotationsStr := annotation.name
+		annotationsStr := strings.ReplaceAll(annotation.name, ": ", " ")
+		annotationsStr = strings.ReplaceAll(annotationsStr, ", ", " ")
 		if len(annotation.annotations) > 0 {
 			annotationsStr += " " + strings.Join(annotation.annotations, " ")
 		}
