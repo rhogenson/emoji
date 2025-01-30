@@ -40,6 +40,9 @@ func getCached(url, cacheDir string) (string, error) {
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("get %q: %s", url, resp.Status)
 	}
+	if err := os.MkdirAll(cacheDir, 0755); err != nil {
+		return "", err
+	}
 	f, err := os.Create(cachePath)
 	if err != nil {
 		return "", err
