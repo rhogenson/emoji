@@ -24,4 +24,4 @@ fzf <emoji_list | cut -d' ' -f1 | tr -d '\n' | tmux load-buffer -w -
 
 ## Data source
 
-Data was pulled from Unicode cldr data and then manually cleaned up.
+Data is pulled from unicode.org using the [generate.go](generate/generate.go) script.
