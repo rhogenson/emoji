@@ -3,14 +3,16 @@ package main
 import (
 	"archive/zip"
 	"bufio"
-	"bytes"
 	"encoding/xml"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"maps"
 	"net/http"
 	"os"
+	"path"
 	"slices"
 	"strconv"
 	"strings"
@@ -22,7 +24,33 @@ var (
 	emojiSequences    = flag.String("emoji-sequences", "https://www.unicode.org/Public/emoji/16.0/emoji-sequences.txt", "URL for emoji sequences file")
 	emojiZWJSequences = flag.String("emoji-zwj-sequences", "https://www.unicode.org/Public/emoji/16.0/emoji-zwj-sequences.txt", "URL for emoji ZWJ sequences file")
 	cldr              = flag.String("cldr", "https://unicode.org/Public/cldr/46/cldr-common-46.0.zip", "URL for CLDR data")
+	c                 = flag.String("c", "", "Cache dir")
 )
+
+func getCached(url, cacheDir string) (string, error) {
+	cachePath := cacheDir + "/" + path.Base(url)
+	if _, err := os.Stat(cachePath); !errors.Is(err, fs.ErrNotExist) {
+		return cachePath, nil
+	}
+	resp, err := http.Get(url)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("get %q: %s", url, resp.Status)
+	}
+	f, err := os.Create(cachePath)
+	if err != nil {
+		return "", err
+	}
+	if _, err := io.Copy(f, resp.Body); err != nil {
+		f.Close()
+		os.Remove(cachePath)
+		return "", fmt.Errorf("write %q: %s", cachePath, err)
+	}
+	return cachePath, f.Close()
+}
 
 func parseEmojiDataLine(line string) (emojis []string, tag string, err error) {
 	line, _, _ = strings.Cut(line, "#")
@@ -62,17 +90,18 @@ func parseEmojiDataLine(line string) (emojis []string, tag string, err error) {
 	return []string{string(emoji)}, tag, nil
 }
 
-func emojiModifiers() ([]string, error) {
+func emojiModifiers(cacheDir string) ([]string, error) {
 	var modifiers []string
-	resp, err := http.Get(*emojiData)
+	filePath, err := getCached(*emojiData, cacheDir)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("get %q: %s", *emojiData, resp.Status)
+	f, err := os.Open(filePath)
+	if err != nil {
+		return nil, err
 	}
-	scanner := bufio.NewScanner(resp.Body)
+	defer f.Close()
+	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		line := scanner.Text()
 		emojis, tag, err := parseEmojiDataLine(line)
@@ -86,17 +115,18 @@ func emojiModifiers() ([]string, error) {
 	return modifiers, scanner.Err()
 }
 
-func emojisInFile(url string, modifiers map[string]bool) ([]string, error) {
-	var emojis []string
-	resp, err := http.Get(url)
+func emojisInFile(url string, modifiers map[string]bool, cacheDir string) ([]string, error) {
+	file, err := getCached(url, cacheDir)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("get %q: %s", url, resp.Status)
+	var emojis []string
+	f, err := os.Open(file)
+	if err != nil {
+		return nil, err
 	}
-	scanner := bufio.NewScanner(resp.Body)
+	defer f.Close()
+	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		line := scanner.Text()
 		lineEmojis, _, err := parseEmojiDataLine(line)
@@ -112,8 +142,8 @@ func emojisInFile(url string, modifiers map[string]bool) ([]string, error) {
 	return emojis, scanner.Err()
 }
 
-func emojis() ([]string, error) {
-	modifiersSlice, err := emojiModifiers()
+func emojis(cacheDir string) ([]string, error) {
+	modifiersSlice, err := emojiModifiers(cacheDir)
 	if err != nil {
 		return nil, err
 	}
@@ -121,11 +151,11 @@ func emojis() ([]string, error) {
 	for _, m := range modifiersSlice {
 		modifiers[m] = true
 	}
-	sequences, err := emojisInFile(*emojiSequences, modifiers)
+	sequences, err := emojisInFile(*emojiSequences, modifiers, cacheDir)
 	if err != nil {
 		return nil, err
 	}
-	zwjSequences, err := emojisInFile(*emojiZWJSequences, modifiers)
+	zwjSequences, err := emojisInFile(*emojiZWJSequences, modifiers, cacheDir)
 	if err != nil {
 		return nil, err
 	}
@@ -271,32 +301,34 @@ func collationOrder(e string, collationData map[string]int) int {
 }
 
 func generate() error {
-	emojis, err := emojis()
+	cacheDir := *c
+	if cacheDir == "" {
+		var err error
+		cacheDir, err = os.MkdirTemp("", "")
+		if err != nil {
+			return err
+		}
+		defer os.RemoveAll(cacheDir)
+	}
+	emojis, err := emojis(cacheDir)
 	if err != nil {
 		return err
 	}
 
-	resp, err := http.Get(*cldr)
+	cldrFile, err := getCached(*cldr, cacheDir)
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("get %q: %s", *cldr, resp.Status)
-	}
-	cldrDataZip, err := io.ReadAll(resp.Body)
+	cldrData, err := zip.OpenReader(cldrFile)
 	if err != nil {
 		return err
 	}
-	cldrData, err := zip.NewReader(bytes.NewReader(cldrDataZip), int64(len(cldrDataZip)))
-	if err != nil {
-		return fmt.Errorf("read CLDR data: %s", err)
-	}
-	annotations, err := annotations(cldrData)
+	defer cldrData.Close()
+	annotations, err := annotations(&cldrData.Reader)
 	if err != nil {
 		return err
 	}
-	collation, err := collationData(cldrData)
+	collation, err := collationData(&cldrData.Reader)
 	if err != nil {
 		return err
 	}
